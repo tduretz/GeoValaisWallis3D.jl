@@ -142,9 +142,35 @@ function imgaxis!(pos, f)
     image!(ax, img, interpolate = true)
     ax, size(img)
 end
+# glaciers, lakes and seismicity for the 3D panels: ice thickness and water depth on the 250 m columns, hypocentres since
+# 1975 (M ≥ 1, SED depths), historical earthquakes of Mw ≥ 5.5 (ECOS, no depth: drawn at the surface)
+const ICECOL, LAKECOL, QUAKECOL = "#f2f9ff", "#0d2a5c", "#ffd23f"
+function fence_extras(x, y)
+    _, _, tr = fetch_topography(R; dx = x[2] - x[1])
+    BW = ice_water_thickness(R, tr; dx = x[2] - x[1])
+    S = fetch_seismicity()
+    q = findall((S.time .>= "1975") .& .!isnan.(S.z) .& (S.mag .>= 1.0))
+    h = findall((S.time .< "1975") .& (S.mag .>= 5.5))
+    return (; ice = BW.ice, water = BW.water, S, q, h)
+end
+icecol(hs) = (c = Makie.to_color(ICECOL); RGBf(c.r * (0.72 + 0.3hs), c.g * (0.72 + 0.3hs), c.b * (0.72 + 0.3hs)))
+surfcol(base, ice, water, hs) = water > 0.002 ? shadecol(LAKECOL, hs) : ice > 0.01 ? icecol(hs) : base
+# hypocentres within `w` km of the two cut faces, projected onto them (face A: E = xa, N ≤ yb; face B: N = yb, E ≥ xa),
+# slightly in front; historical epicentres on the surface
+function quakes3d!(ax, X, topoat, xa, yb; w = 5.0, off = 0.4)
+    S = X.S
+    ka = filter(k -> abs(S.E[k] - xa) < w && S.N[k] <= yb, X.q)
+    kb = filter(k -> abs(S.N[k] - yb) < w && S.E[k] >= xa, X.q)
+    pts = [Point3f.(xa + off, S.N[ka], S.z[ka]); Point3f.(S.E[kb], yb - off, S.z[kb])]
+    m = [S.mag[ka]; S.mag[kb]]
+    scatter!(ax, pts, color = QUAKECOL, markersize = 2.5 .+ 2.2 .* m, strokecolor = (:black, 0.6), strokewidth = 0.5)
+    scatter!(ax, [Point3f(S.E[k], S.N[k], topoat(S.E[k], S.N[k]) + 1.0) for k in X.h], marker = :star5,
+             markersize = 7 .* S.mag[X.h] .- 18, color = :red, strokecolor = :black, strokewidth = 0.8)
+end
+
 # fence diagram of the curvilinear model: tectonic map on the relief (SE quadrant cut away), the phases on the two cut faces
-# with the mesh lines (every `every`-th level) and the meshed surfaces
-function render_fence(name, sz; every = 6, linesurf = true)
+# with the mesh lines (every `every`-th level) and the meshed surfaces; glaciers and lakes on the relief, hypocentres
+function render_fence(name, sz; every = 6, linesurf = true, extras = true)
     maps = MAPS
     x, y = maps.x, maps.y
     topo = maps.z[:, :, end]
@@ -158,9 +184,12 @@ function render_fence(name, sz; every = 6, linesurf = true)
     phrgba(p) = (c = Makie.to_color(PHCOLS[p + 1]); RGBAf(c.r, c.g, c.b, 1))
     zsurf = copy(topo); zsurf[(x .> x[ia]) .& (y' .< y[jb])] .= NaN
     srgb = [t.level2[I] > 0 ? shadecol(tcol[t.level2[I]], hs[I]) : grey(hs[I]) for I in CartesianIndices(topo)]
+    X = extras ? fence_extras(x, y) : nothing
+    extras && (srgb = [surfcol(srgb[I], X.ice[I], X.water[I], hs[I]) for I in CartesianIndices(topo)])
     render3d(name, sz, ax -> begin
         ax.aspect = (130, 95, 50); ax.azimuth = -0.33π; ax.elevation = 0.13π
         surface!(ax, x, y, zsurf, color = srgb, shading = NoShading)
+        extras && quakes3d!(ax, X, (e, n) -> topo[col_index(x, e), col_index(y, n)], x[ia], y[jb])
         nz = size(maps.z, 3)
         # face A (x = x[ia], south part), face B (y = y[jb], east part): the mesh nodes are the surface vertices
         surface!(ax, fill(x[ia], length(jA), nz), repeat(y[jA], 1, nz), A.Z[jA, :], color = phrgba.(A.F.Phases[1, jA, :]), shading = NoShading)
@@ -190,10 +219,14 @@ if "overview" in WHICH
           fontsize = 20, halign = :left, tellwidth = false)
     _, fsz = imgaxis!(fig[2, 1], fence)
     els, labs = surflegend((; base_cs = 0, conrad = 0, moho = 0))
-    Legend(fig[3, 1], [[PolyElement(color = PHCOLS[k]) for k in 2:6]; els], [PHNAMES[2:6]; labs], orientation = :horizontal,
-           framevisible = false, labelsize = 17, colgap = 12, nbanks = 2, tellwidth = false)
+    Legend(fig[3, 1], [[PolyElement(color = PHCOLS[k]) for k in 2:6]; els; PolyElement(color = ICECOL, strokecolor = :grey60, strokewidth = 0.5);
+                       PolyElement(color = LAKECOL); MarkerElement(marker = :circle, color = QUAKECOL, strokecolor = :black, strokewidth = 0.5, markersize = 12);
+                       MarkerElement(marker = :star5, color = :red, strokecolor = :black, strokewidth = 0.5, markersize = 16)],
+           [PHNAMES[2:6]; labs; "glaciers"; "lakes"; "hypocentres since 1975 within 5 km (M ≥ 1)"; "historical earthquakes Mw ≥ 5.5"], orientation = :horizontal,
+           framevisible = false, labelsize = 17, colgap = 12, nbanks = 3, tellwidth = false)
     Label(fig[4, 1], "Grid levels follow the topography, the base of the consolidated sediments, the Conrad and the European Moho; " *
-                     "the Quaternary fill lies in the top 1 km with 25 m spacing. Surface: tectonic map (swisstopo 1:500 000) on the relief.",
+                     "the Quaternary fill lies in the top 1 km with 25 m spacing. Surface: tectonic map (swisstopo 1:500 000) on the relief, glaciers " *
+                     "(Grab et al. 2021) and lakes (swissBATHY3D). Hypocentres: SED catalogue, within 5 km of the cut faces, projected onto them.",
           fontsize = 15, color = :grey30, halign = :left, justification = :left, word_wrap = true, tellwidth = false)
     rowsize!(fig.layout, 2, Fixed((1500 - 48) * fsz[2] / fsz[1]))
     resize_to_layout!(fig)
@@ -242,9 +275,10 @@ if "layers" in WHICH
     topo = Z[:, :, L.topography]
     moved(s) = abs.(Z[:, :, L[s]] .- maps.surfaces[s]) .> 1e-3
     wedge = nanmask(I.moho_ad, .!(I.moho_ad .> I.moho_eu))
+    LBW = ice_water_thickness(R, fetch_topography(R; dx = 0.25)[3]; dx = 0.25)
     fig = Figure(size = (1500, 760))
     panels = [
-        ("Mesh level $(L.topography): topography (swissALTIRegio)", topo, :batlowW, (0.3, 4.2), "elevation (km)", nothing),
+        ("Mesh level $(L.topography): topography (swissALTIRegio); glaciers, lakes", topo, :batlowW, (0.3, 4.2), "elevation (km)", nothing),
         ("Quaternary thickness (swissBEDROCK), in the 25 m layer", nanmask(1e3 .* I.quat_thickness, I.quat_thickness .<= 0.002), Reverse(:lapaz), (0, 600), "thickness (m)", nothing),
         ("Mesh level $(L.base_cs): base of consolidated sediments", Z[:, :, L.base_cs], :batlow, (-12, 3), "elevation (km)", :base_cs),
         ("Mesh level $(L.conrad): Conrad", Z[:, :, L.conrad], :batlow, (-35, -10), "elevation (km)", nothing),
@@ -259,6 +293,10 @@ if "layers" in WHICH
         hm = heatmap!(ax, x, y, A, colormap = cm, colorrange = cr, alpha = k == 1 ? 0.55 : 0.8, nan_color = :transparent)
         k >= 3 && contour!(ax, x, y, A, levels = range(cr..., step = k >= 5 ? 5 : 2.5), color = (:black, 0.5), linewidth = 0.6)
         isnothing(mv) || contour!(ax, x, y, Float64.(moved(mv)), levels = [0.5], color = :red, linewidth = 1.0)
+        if k <= 2       # glaciers (Grab et al. 2021) and lakes (swissBATHY3D)
+            contour!(ax, x, y, LBW.ice, levels = [0.01], color = :steelblue4, linewidth = 0.7)
+            contour!(ax, x, y, LBW.water, levels = [0.002], color = LAKECOL, linewidth = 1.2)
+        end
         places!(ax; names = false)
         limits_region!(ax)
         Colorbar(g[1, 2], hm, label = lab, height = Relative(0.7))
@@ -725,11 +763,14 @@ if "showcase" in WHICH
           fontsize = 27, color = muted, halign = :left, justification = :left, word_wrap = true, tellwidth = false)
     cap(pos, s) = Label(pos, s, fontsize = 27, color = ink, halign = :left, justification = :left, tellwidth = false, word_wrap = true)
 
-    cap(fig[3, 1:2], "The 3D model: tectonic map on the relief, phases and mesh down to 70 km")
+    cap(fig[3, 1:2], "The 3D model: tectonic map, glaciers and lakes on the relief, phases and mesh down to 70 km, earthquakes of the SED catalogue")
     _, fsz = imgaxis!(fig[4, 1:2], fence)
     els, labs = surflegend((; base_cs = 0, conrad = 0, moho = 0))
-    Legend(fig[5, 1:2], [[PolyElement(color = PHCOLS[k]) for k in 3:6]; els], [["sedimentary nappes", "upper crust", "lower crust", "mantle"]; labs],
-           orientation = :horizontal, framevisible = false, labelsize = 24, colgap = 14, nbanks = 2, tellwidth = false)
+    Legend(fig[5, 1:2], [[PolyElement(color = PHCOLS[k]) for k in 3:6]; els; PolyElement(color = ICECOL, strokecolor = :grey60, strokewidth = 0.5);
+                         PolyElement(color = LAKECOL); MarkerElement(marker = :circle, color = QUAKECOL, strokecolor = :black, strokewidth = 0.5, markersize = 16);
+                         MarkerElement(marker = :star5, color = :red, strokecolor = :black, strokewidth = 0.5, markersize = 20)],
+           [["sedimentary nappes", "upper crust", "lower crust", "mantle"]; labs; "glaciers"; "lakes"; "earthquakes since 1975 (within 5 km)"; "historical Mw ≥ 5.5"],
+           orientation = :horizontal, framevisible = false, labelsize = 24, colgap = 14, nbanks = 3, tellwidth = false)
 
     # zoom on the mesh in the Rhône valley
     cap(fig[6, 1], "Terrain-following mesh at Sion: 25 m levels hold the Quaternary fill")
@@ -757,8 +798,8 @@ if "showcase" in WHICH
     end
     Colorbar(g[2, 1], hm, label = "Δρ (kg/m³)", vertical = false, flipaxis = false, width = Relative(0.8), labelsize = 22, ticklabelsize = 20)
 
-    Label(fig[8, 1:2], "Data: swisstopo (swissALTIRegio, swissBEDROCK, Tectonic Map 1:500 000, Gravimetric Atlas), 3D-ALPS (Spooner et al. 2019), " *
-                       "Spada et al. (2013).    github.com/tduretz/GeoValaisWallis3D.jl",
+    Label(fig[8, 1:2], "Data: swisstopo (swissALTIRegio, swissBEDROCK, swissBATHY3D, Tectonic Map 1:500 000, Gravimetric Atlas), 3D-ALPS (Spooner et al. 2019), " *
+                       "Spada et al. (2013), Grab et al. (2021), Swiss Seismological Service.    github.com/tduretz/GeoValaisWallis3D.jl",
           fontsize = 18, color = muted, halign = :left, justification = :left, tellwidth = false, word_wrap = true)
     colsize!(fig.layout, 1, Relative(0.55))
     cw = W - 72

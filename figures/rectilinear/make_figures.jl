@@ -369,7 +369,11 @@ if "showcase" in WHICH
     ex, ny_ = (2566.0, 2612.0), (1100.0, 1132.0)
     ix = findall(e -> ex[1] <= e <= ex[2], sm.x); iy = findall(n -> ny_[1] <= n <= ny_[2], sm.y)
     zs = sm.topo[ix, iy]; hs = clamp.(hillshade(zs, 0.05), 0, 1)
-    rgb = [sm.class[ix[I[1]], iy[I[2]]] == 0 ? grey(hs[I]) : shadecol(clcols[sm.class[ix[I[1]], iy[I[2]]]], hs[I]) for I in CartesianIndices(zs)]
+    icecol, lakecol, quakecol = "#f2f9ff", "#0d2a5c", "#ffd23f"
+    iceshade(hs) = (c = Makie.to_color(icecol); RGBf(c.r * (0.72 + 0.3hs), c.g * (0.72 + 0.3hs), c.b * (0.72 + 0.3hs)))
+    BWh = ice_water_thickness(R, sm.topo; dx = 0.05)         # glaciers (Grab et al. 2021) and lakes (swissBATHY3D)
+    rgb = [sm.class[ix[I[1]], iy[I[2]]] == 0 ? (BWh.ice[ix[I[1]], iy[I[2]]] > 0.01 ? iceshade(hs[I]) : grey(hs[I])) :
+           shadecol(clcols[sm.class[ix[I[1]], iy[I[2]]]], hs[I]) for I in CartesianIndices(zs)]
     hero = render3d("hero", (W, 900), ax -> begin
         ax.aspect = (ex[2] - ex[1], ny_[2] - ny_[1], 1.5 * 4.0); ax.azimuth = -0.35π; ax.elevation = 0.2π
         surface!(ax, sm.x[ix], sm.y[iy], zs, color = rgb, shading = NoShading)
@@ -396,10 +400,23 @@ if "showcase" in WHICH
     phrgba(p) = p == 0 ? RGBAf(1, 1, 1, 0) : (c = Makie.to_color(phcols[p + 1]); RGBAf(c.r, c.g, c.b, 1))
     zsurf = replace(topo, NaN => 0.0); zsurf[(x .> SEC_A.E) .& (y' .< SEC_B.N)] .= NaN   # cut the corner facing the viewer
     srgb = [t.level2[I] > 0 ? shadecol(tcol[t.level2[I]], hs2[I]) : grey(hs2[I]) for I in CartesianIndices(topo)]
+    BW = ice_water_thickness(R, topo; dx)
+    srgb = [BW.water[I] > 0.002 ? shadecol(lakecol, hs2[I]) : BW.ice[I] > 0.01 ? iceshade(hs2[I]) : srgb[I] for I in CartesianIndices(topo)]
+    # hypocentres since 1975 (M ≥ 1) within 5 km of the cut faces, projected onto them; historical earthquakes of Mw ≥ 5.5 on the surface
+    SQ = fetch_seismicity()
+    q = (SQ.time .>= "1975") .& .!isnan.(SQ.z) .& (SQ.mag .>= 1.0)
+    ka = findall(q .& (abs.(SQ.E .- SEC_A.E) .< 5) .& (SQ.N .<= SEC_B.N)); kb = findall(q .& (abs.(SQ.N .- SEC_B.N) .< 5) .& (SQ.E .>= SEC_A.E))
+    qpts = [Point3f.(SEC_A.E + 0.4, SQ.N[ka], SQ.z[ka]); Point3f.(SQ.E[kb], SEC_B.N - 0.4, SQ.z[kb])]; qmag = [SQ.mag[ka]; SQ.mag[kb]]
+    kh = findall((SQ.time .< "1975") .& (SQ.mag .>= 5.5))
+    topoat(e, n) = replace(topo, NaN => 0.0)[argmin(abs.(x .- e)), argmin(abs.(y .- n))]
     za = maps.z; jA = findall(<(SEC_B.N), maps.y); iB = findall(>(SEC_A.E), maps.x)
     fence = render3d("fence", (1000, 900), ax -> begin
         ax.aspect = (130, 95, 50); ax.azimuth = -0.33π; ax.elevation = 0.13π
         surface!(ax, x, y, zsurf, color = srgb, shading = NoShading)
+        scatter!(ax, qpts, color = quakecol, markersize = 2.5 .+ 2.2 .* qmag,
+                 strokecolor = (:black, 0.6), strokewidth = 0.5)
+        scatter!(ax, [Point3f(SQ.E[k], SQ.N[k], topoat(SQ.E[k], SQ.N[k]) + 1.0) for k in kh], marker = :star5,
+                 markersize = 7 .* SQ.mag[kh] .- 18, color = :red, strokecolor = :black, strokewidth = 0.8)
         surface!(ax, fill(maps.x[ia], length(jA), length(za)), repeat(maps.y[jA], 1, length(za)), repeat(za', length(jA), 1),
                  color = phrgba.(A.Phases[1, jA, :]), shading = NoShading)
         surface!(ax, repeat(maps.x[iB], 1, length(za)), fill(maps.y[jb], length(iB), length(za)), repeat(za', length(iB), 1),
@@ -420,10 +437,13 @@ if "showcase" in WHICH
            "SIA 261 class:", orientation = :horizontal, titleposition = :left, framevisible = false, labelsize = 24, titlesize = 24,
            titlefont = :regular, colgap = 14, tellwidth = false)
 
-    cap(fig[6, 1], "The 3D model: tectonic map on the relief, crust and Moho to 60 km")
+    cap(fig[6, 1], "The 3D model: tectonic map, glaciers and lakes on the relief, crust and Moho to 60 km, earthquakes of the SED catalogue")
     _, fsz = imgaxis!(fig[7, 1], fence)
-    Legend(fig[8, 1], [PolyElement(color = phcols[k]) for k in 3:6], ["sedimentary nappes", "upper crust", "lower crust", "mantle"],
-           orientation = :horizontal, framevisible = false, labelsize = 24, colgap = 14, tellwidth = false)
+    Legend(fig[8, 1], [[PolyElement(color = phcols[k]) for k in 3:6]; PolyElement(color = icecol, strokecolor = :grey60, strokewidth = 0.5);
+                       PolyElement(color = lakecol); MarkerElement(marker = :circle, color = quakecol, strokecolor = :black, strokewidth = 0.5, markersize = 16);
+                       MarkerElement(marker = :star5, color = :red, strokecolor = :black, strokewidth = 0.5, markersize = 20)],
+           ["sedimentary nappes", "upper crust", "lower crust", "mantle", "glaciers", "lakes", "earthquakes since 1975 (within 5 km)", "historical Mw ≥ 5.5"],
+           orientation = :horizontal, framevisible = false, labelsize = 24, colgap = 14, nbanks = 2, tellwidth = false)
 
     # gravity inversion
     k = argmin(abs.(dres.zg .+ 16.0))
@@ -458,8 +478,8 @@ if "showcase" in WHICH
     axislegend(axm, [PolyElement(color = mcm[k]) for (_, k) in grp], first.(grp), position = :lb, framevisible = true,
                framecolor = (:white, 0), backgroundcolor = (:white, 0.85), labelsize = 22, rowgap = 2, margin = (8, 8, 8, 8))
 
-    Label(fig[11, 1:2], "Data: swisstopo (swissALTIRegio, swissBEDROCK, Tectonic Map 1:500 000, Gravimetric Atlas), BAFU / CREALP, 3D-ALPS " *
-                        "(Spooner et al. 2019), Spada et al. (2013), Thornton et al. (2018).    github.com/tduretz/GeoValaisWallis3D.jl",
+    Label(fig[11, 1:2], "Data: swisstopo (swissALTIRegio, swissBEDROCK, swissBATHY3D, Tectonic Map 1:500 000, Gravimetric Atlas), BAFU / CREALP, 3D-ALPS " *
+                        "(Spooner et al. 2019), Spada et al. (2013), Thornton et al. (2018), Grab et al. (2021), Swiss Seismological Service.    github.com/tduretz/GeoValaisWallis3D.jl",
           fontsize = 18, color = muted, halign = :left, justification = :left, tellwidth = false, word_wrap = true)
     colsize!(fig.layout, 1, Relative(0.6))
     cw = W - 72                                   # content width (figure padding)

@@ -71,8 +71,10 @@ julia --project=figures -t auto figures/curvilinear/make_figures.jl mesh layers 
 `overview` and `showcase` render their 3D panels with GLMakie, which needs a display. `gravity` and `density` call GMG
 `voxel_grav` on curvilinear grids. Their results are cached in `data/output/curvilinear_*.jls`.
 
-**Overview.** The fence diagram of the model, with the tectonic map on the relief. The cut faces show the phases, every
-4th grid level, and the meshed surfaces.
+**Overview.** The fence diagram of the model, with the tectonic map, the glaciers and the lakes on the relief. The cut
+faces show the phases, every 4th grid level and the meshed surfaces. On them are the hypocentres of the SED catalogue
+since 1975 (M ≥ 1) within 5 km, projected onto the faces. Stars mark historical earthquakes of Mw ≥ 5.5, at the surface
+because ECOS gives no depth.
 
 ![Overview](overview.jpg)
 
@@ -83,7 +85,8 @@ in the column at Sion.
 ![Mesh](mesh.jpg)
 
 **Meshed surfaces.** Maps of the levels of the mesh, with the Quaternary thickness and the Adriatic Moho, which is not
-meshed. The red outline marks the columns where the level of the base of the consolidated sediments is pushed down.
+meshed. The red outline marks the columns where the level of the base of the consolidated sediments is pushed down. The
+outlines of the glaciers and lakes are on the first two maps.
 
 ![Meshed surfaces](layers.jpg)
 
@@ -154,6 +157,7 @@ instead of making steps.
 
 ![Morcles](morcles.jpg)
 
-**Showcase.** One image for posts: the fence diagram, the mesh at Sion and the gravity inversion.
+**Showcase.** One image for posts: the fence diagram (with glaciers, lakes and hypocentres), the mesh at Sion and the
+gravity inversion.
 
 ![Showcase](showcase.jpg)
