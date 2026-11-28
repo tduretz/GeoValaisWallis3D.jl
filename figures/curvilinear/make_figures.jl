@@ -1,7 +1,7 @@
 # Figures of the model on the curvilinear mesh of GeophysicalModelGenerator (curvilinear_grid): the grid levels follow the
 # topography, the base of the consolidated sediments, the Conrad and the European Moho.
 #     julia --project=figures -t auto figures/curvilinear/make_figures.jl [figure ...]
-# Figures: overview mesh layers sections subsoil gravity density morcles showcase (default: all).
+# Figures: overview mesh layers sections subsoil gravity density glaciers seismicity morcles showcase (default: all).
 # Output: figures/curvilinear/*.jpg (needs ImageMagick). overview and showcase render their 3D panels with GLMakie (needs a
 # display). gravity and density use GMG voxel_grav on curvilinear grids; GVW_BACKEND=metal runs them on the Apple GPU
 # (Float32), otherwise on the CPU (Float64, slow). Their results are cached in data/output/curvilinear_*.jls (delete to rerun).
@@ -10,7 +10,7 @@ using GeoValaisWallis3D, CairoMakie, Statistics, Serialization
 
 const FIGDIR = @__DIR__
 mkpath(FIGDIR)
-const ALL = ["overview", "mesh", "layers", "sections", "subsoil", "gravity", "density", "morcles", "showcase"]
+const ALL = ["overview", "mesh", "layers", "sections", "subsoil", "gravity", "density", "glaciers", "seismicity", "morcles", "showcase"]
 const WHICH = isempty(ARGS) ? ALL : ARGS
 const R = valais_region()
 CairoMakie.activate!(type = "png", px_per_unit = 1.25)
@@ -110,7 +110,7 @@ surflegend(levels; kw...) = ([LineElement(color = SURF[s][2], linewidth = 2, lin
                              [SURF[s][1] for s in keys(levels) if s != :bottom])
 
 # the model on the curvilinear mesh (250 m columns); built once, used by most figures
-const NEEDMAPS = any(in(WHICH), ["overview", "mesh", "layers", "sections", "subsoil", "showcase"])
+const NEEDMAPS = any(in(WHICH), ["overview", "mesh", "layers", "sections", "subsoil", "seismicity", "showcase"])
 const MAPS = NEEDMAPS ? valais_curvilinear_maps(R; dx = 0.25) : nothing
 col_index(v, a) = argmin(abs.(v .- a))
 section_A(maps; kw...) = (i = col_index(maps.x, SEC_A.E); (; i, h = maps.y, Z = maps.z[i, :, :], F = valais_model_block(maps, i:i, eachindex(maps.y); kw...)))
@@ -476,6 +476,193 @@ if "density" in WHICH
     Label(fig[0, 1], "Density inversion of the Bouguer anomaly on a curvilinear mesh (GMG voxel_grav + voxel_grav_adjoint, LSQR): $(length(E)) atlas points, " *
                      "$(length(z)) unknowns ($(join(size(z), " × ")), no air nodes), $(DRES.iterations) iterations", fontsize = 14)
     savefig("density", fig)
+end
+
+# ------------------------------------------------------------------------------------------- glaciers and lakes
+# ice (Swiss Glacier Thickness R2020) and lake water (swissBATHY3D) between the topography and the solid surface: maps, their
+# gravity effect at the atlas points (GMG voxel_grav, curvilinear density meshes with and without them), sections
+if "glaciers" in WHICH
+    PH9 = [PHCOLS; "#bfe3f2"; "#2f6db5"]; PH9CM = cgrad(PH9, 9, categorical = true)
+    PH9N = [PHNAMES; "glacier ice"; "lake water"]
+    cache = datadir("output", "curvilinear_glaciers_gravity.jls")
+    GR = if isfile(cache)
+        deserialize(cache)
+    else
+        backend, ft = backend_ft()
+        at = fetch_gravity_atlas(R; margin = 20.0)
+        function gravity_of(; kw...)
+            d = curvilinear_density_model(R; pad = 20.0, dx = 1.0, kw...)
+            sel = (d.x[1] + 2 .<= at.E .<= d.x[end] - 2) .& (d.y[1] + 2 .<= at.N .<= d.y[end] - 2) .& .!isnan.(at.bouguer)
+            X, Y, _ = xyz_grid(d.x, d.y, 1:size(d.z, 3))
+            St = CartData(reshape(at.E[sel], :, 1, 1), reshape(at.N[sel], :, 1, 1), reshape(at.h[sel], :, 1, 1), (h = reshape(at.h[sel], :, 1, 1),))
+            # densities relative to 2670 kg/m³: both meshes have the same outer shape, so the reference cancels in the difference
+            g = vec(voxel_grav(CartData(X, Y, d.z, (rho = d.rho,)), d.rho .- 2670.0; stations = St, refMod = zeros(size(d.z, 3)),
+                               rhoTol = 0, backend, float_type = ft)[1])
+            (; g, sel)
+        end
+        t0 = time()
+        g0 = gravity_of(); g1 = gravity_of(glaciers = true, lakes = true)
+        @info "gravity of the ice and water in $(round(time() - t0, digits = 1)) s"
+        r = (; E = at.E[g0.sel], N = at.N[g0.sel], dg = g1.g .- g0.g)
+        serialize(cache, r); r
+    end
+    # maps at 100 m
+    xm, ym, tm = fetch_topography(R; dx = 0.1)
+    BW = ice_water_thickness(R, tm; dx = 0.1)
+    MG = valais_curvilinear_maps(R; dx = 0.25, glaciers = true, lakes = true)
+    I = MG.interfaces
+    ki = argmax(I.ice); kl = argmax(I.water)
+    vol(a, dx) = sum(a) * dx^2
+    fig = Figure(size = (1500, 1250))
+    g1 = fig[1, 1] = GridLayout()
+    ax = mapaxis(g1[1, 1]; title = "Ice thickness (Grab et al. 2021) and lake depth (swissBATHY3D) at 100 m")
+    shade!(ax, xm, ym, tm)
+    hi = heatmap!(ax, xm, ym, nanmask(1e3 .* BW.ice, BW.ice .<= 0.002), colormap = Reverse(:devon), colorrange = (0, 600), nan_color = :transparent)
+    hw = heatmap!(ax, xm, ym, nanmask(1e3 .* BW.water, BW.water .<= 0.002), colormap = Reverse(:deep), colorrange = (0, 300), nan_color = :transparent)
+    for (k, n) in ((ki, "A"), (kl, "B"))
+        e = MG.x[Tuple(k)[1]]
+        lines!(ax, [e, e], collect(R.N), color = :black, linewidth = 1.2, linestyle = :dash)
+        text!(ax, e, R.N[2], text = "$(n)–$(n)'", align = (:center, :bottom), offset = (0, 2), fontsize = 13)
+    end
+    places!(ax); limits_region!(ax)
+    Colorbar(g1[1, 2], hi, label = "ice thickness (m)", height = Relative(0.7))
+    Colorbar(g1[1, 3], hw, label = "water depth (m)", height = Relative(0.7))
+    # gravity effect, and what it does to the residual of the starting model of the density inversion
+    g2 = fig[1, 2] = GridLayout()
+    inner = (R.E[1] .<= GR.E .<= R.E[2]) .& (R.N[1] .<= GR.N .<= R.N[2])
+    ax = mapaxis(g2[1, 1]; title = "Gravity effect of ice and water at the atlas points (ρ 917 and 1000 instead of 2670 / 2000 kg/m³)")
+    shade!(ax, xm, ym, tm)
+    contour!(ax, xm, ym, BW.ice, levels = [0.002], color = (:black, 0.5), linewidth = 0.5)
+    sc = scatter!(ax, GR.E, GR.N, color = GR.dg, colormap = Reverse(:RdBu), colorrange = (-8, 8), markersize = 5,
+                  strokecolor = (:black, 0.3), strokewidth = 0.2)
+    limits_region!(ax)
+    Colorbar(g2[1, 2], sc, label = "Δg (mGal)", height = Relative(0.7))
+    note = "in the region: Δg from $(round(minimum(GR.dg[inner]), digits = 1)) to $(round(maximum(GR.dg[inner]), digits = 1)) mGal"
+    dcache = datadir("output", "curvilinear_density_inversion.jls")
+    if isfile(dcache)
+        D = deserialize(dcache)
+        if D.E == GR.E && D.N == GR.N
+            rms(a) = sqrt(mean(abs2, a))
+            r0 = D.dobs .- D.dg0 .- D.offset; r0 .-= mean(r0[inner])
+            r1 = r0 .- GR.dg; r1 .-= mean(r1[inner])
+            s = inner .& (GR.dg .< -1)
+            note *= "\nresidual (observed − model) of the starting model of the density inversion: rms $(round(rms(r0[inner]), digits = 1)) → " *
+                    "$(round(rms(r1[inner]), digits = 1)) mGal with ice and water.\nAt the $(count(s)) stations with Δg < −1 mGal (mean $(round(mean(GR.dg[s]), digits = 1)) mGal) " *
+                    "the residual is already $(round(mean(r0[s]), digits = 1)) mGal (elsewhere $(round(mean(r0[inner .& .!s]), digits = 1))):\n" *
+                    "the model is lighter than observed there, and adding the ice makes it worse. The atlas reduction may already treat\n" *
+                    "glaciers and lakes, or the crystalline massifs under them are denser than in 3D-ALPS; the gravity figures keep them off."
+        end
+    end
+    Label(g2[2, 1:2], note, fontsize = 12, halign = :left, tellwidth = false)
+    # sections through the thickest ice and the deepest lake: every level and column of the 250 m curvilinear mesh
+    for (c, k, n, nl, zl, ttl) in ((1, ki, "A", (1135.0, 1162.0), (0.8, 4.3), "glacier ice above the bed (Aletsch, Konkordiaplatz)"),
+                                   (2, kl, "B", (1128.0, 1150.0), (-1.2, 1.0), "Lac Léman: water, Quaternary below the lake floor"))
+        i = Tuple(k)[1]
+        jj = findall(v -> nl[1] <= v <= nl[2], MG.y)
+        F = valais_model_block(MG, i:i, jj)
+        Zs = MG.z[i, jj, :]
+        local ax = Axis(fig[2, c], title = "$(n)–$(n)' (E = $(MG.x[i]) km): $ttl", xlabel = "N (km)", ylabel = "elevation (km)")
+        curvheatmap!(ax, MG.y[jj], Zs, Float64.(sq(F.Phases)), colormap = PH9CM, colorrange = (-0.5, 8.5))
+        meshlines!(ax, MG.y[jj], Zs, MG.levels; every = 1, cols = 1, color = (:black, 0.2), linewidth = 0.3)
+        lines!(ax, MG.y[jj], I.solid[i, jj], color = :black, linewidth = 1.2)
+        xlims!(ax, nl...); ylims!(ax, zl...)
+    end
+    Legend(fig[3, 1:2], [PolyElement(color = PH9[k]) for k in (2, 3, 4, 8, 9)], PH9N[[2, 3, 4, 8, 9]], orientation = :horizontal, framevisible = false)
+    rowsize!(fig.layout, 1, Relative(0.5))
+    Label(fig[0, 1:2], "Glaciers and lakes in the model (glaciers = true, lakes = true): $(round(vol(I.ice, 0.25), digits = 1)) km³ of ice " *
+                       "(up to $(round(Int, 1e3maximum(I.ice))) m) and $(round(vol(I.water, 0.25), digits = 1)) km³ of lake water " *
+                       "(up to $(round(Int, 1e3maximum(I.water))) m) in the region; black line: the solid surface", fontsize = 14)
+    savefig("glaciers", fig)
+end
+
+# ------------------------------------------------------------------------------------------------ seismicity
+# SED earthquake catalogue (instrumental since 1975, ECOS historical events) and the focal mechanisms of Truttmann et al. (2023)
+if "seismicity" in WHICH
+    S = fetch_seismicity()
+    F = fetch_focal_mechanisms()
+    RL = read_relocations_truttmann2023()
+    instr = (S.time .>= "1975") .& .!isnan.(S.z)
+    hist = (S.time .< "1975") .& (S.mag .>= 4.5)
+    yr(t) = parse(Int, t[1:4]) + (parse(Int, t[6:7]) - 0.5) / 12
+    msize(m) = 2.0 + 2.2 * max(m, 0.0)^1.6
+    # phase of the model at each instrumental hypocentre (nearest column of the 250 m mesh)
+    maps = MAPS
+    phase_at(e, n, z) = (i = col_index(maps.x, e); j = col_index(maps.y, n); GeoValaisWallis3D._model_point(maps, i, j, z)[1])
+    ph = [phase_at(S.E[k], S.N[k], S.z[k]) for k in findall(instr)]
+    share(p) = round(100 * count(==(p), ph) / length(ph), digits = 1)
+    fig = Figure(size = (1500, 1300))
+    # map
+    g1 = fig[1, 1] = GridLayout()
+    xm, ym, tm = fetch_topography(R; dx = 0.1)
+    ax = mapaxis(g1[1, 1]; title = "SED catalogue: $(count(instr)) earthquakes since 1975 (depth), historical M ≥ 4.5 before 1975 (stars)")
+    shade!(ax, xm, ym, tm)
+    o = sortperm(S.mag[instr]); ii = findall(instr)[o]
+    sc = scatter!(ax, S.E[ii], S.N[ii], color = S.depth[ii], colormap = Reverse(:viridis), colorrange = (0, 15),
+                  markersize = msize.(S.mag[ii]), strokecolor = (:black, 0.4), strokewidth = 0.3)
+    hh = findall(hist)
+    scatter!(ax, S.E[hh], S.N[hh], marker = :star5, markersize = 3 .* S.mag[hh] .- 2, color = (:red, 0.6), strokecolor = :black, strokewidth = 0.6)
+    # one label per year: its largest event, if Mw ≥ 5.5
+    for y in unique(first.(S.time[hh], 4))
+        k = hh[findall(==(y), first.(S.time[hh], 4))]; k = k[argmax(S.mag[k])]
+        S.mag[k] >= 5.5 && text!(ax, S.E[k], S.N[k], text = "$(y) Mw $(S.mag[k])", offset = (7, -5), fontsize = 12,
+                                 glowcolor = (:white, 0.8), glowwidth = 2)
+    end
+    Z = (E = (2588.0, 2604.0), N = (1116.0, 1136.0))
+    lines!(ax, [Z.E[1], Z.E[2], Z.E[2], Z.E[1], Z.E[1]], [Z.N[1], Z.N[1], Z.N[2], Z.N[2], Z.N[1]], color = :black, linewidth = 1.2)
+    lines!(ax, [SEC_A.E, SEC_A.E], collect(R.N), color = :black, linestyle = :dash)
+    text!(ax, SEC_A.E, R.N[2], text = "A–A'", align = (:center, :bottom), offset = (0, 2))
+    places!(ax; names = false); limits_region!(ax)
+    Colorbar(g1[1, 2], sc, label = "depth (km)", height = Relative(0.7))
+    # zoom: relocations and focal mechanisms
+    g2 = fig[1, 2] = GridLayout()
+    ax = mapaxis(g2[1, 1]; title = "St-Léonard and Anzère sequences: $(length(RL.E)) relocations, $(length(F.E)) focal mechanisms (Truttmann et al. 2023)")
+    shade!(ax, xm, ym, tm)
+    for (s, c) in (("St-Léonard", "#c0504d"), ("Anzère", "#2a78d6"))
+        k = RL.sequence .== s
+        scatter!(ax, RL.E[k], RL.N[k], color = (c, 0.7), markersize = msize.(RL.mag[k]) .* 0.8, strokecolor = :black, strokewidth = 0.2, label = s)
+    end
+    # beachballs in rows above (Anzère) and below (St-Léonard) the clusters, with leader lines to the epicentres
+    for (loc, nrow0, dn) in (("Anzere", 1133.6, 1.5), ("St-Leonard", 1118.4, -1.5))
+        ks = findall(==(loc), F.locality); ks = ks[sortperm(F.E[ks])]
+        per = 9; d = (Z.E[2] - Z.E[1] - 1) / per
+        for (m, k) in enumerate(ks)
+            row, col = divrem(m - 1, per)
+            e0 = Z.E[1] + 1.0 + (col + 0.5 * (row % 2)) * d; n0 = nrow0 + row * dn
+            lines!(ax, [F.E[k], e0], [F.N[k], n0], color = (:black, 0.3), linewidth = 0.5)
+            bx, by, bp = beachball(F.strike1[k], F.dip1[k], F.rake1[k]; n = 41)
+            heatmap!(ax, e0 .+ 0.38d .* bx, n0 .+ 0.38d .* by, bp, colormap = [:white, loc == "Anzere" ? "#2a78d6" : "#c0504d"], colorrange = (0, 1), nan_color = :transparent)
+            lines!(ax, e0 .+ 0.38d .* cos.(range(0, 2π, 60)), n0 .+ 0.38d .* sin.(range(0, 2π, 60)), color = :black, linewidth = 0.6)
+        end
+    end
+    places!(ax); limits!(ax, Z.E..., Z.N...)
+    axislegend(ax, position = :lc, framevisible = true, labelsize = 11)
+    # section A–A' through the model with the hypocentres within 10 km
+    g3 = fig[2, 1:2] = GridLayout()
+    A = section_A(maps)
+    ax = Axis(g3[1, 1], title = "A–A' (E = $(maps.x[A.i]) km): model phases and hypocentres within 10 km (SED depths; z = −depth). " *
+                                "Hypocentres since 1975 in: Quaternary $(share(1)) %, consolidated sediments $(share(2)) %, upper crust $(share(3)) %, " *
+                                "lower crust $(share(4)) %", xlabel = "N (km)", ylabel = "elevation (km)", titlesize = 12)
+    curvheatmap!(ax, A.h, A.Z, Float64.(sq(A.F.Phases)), colormap = PHCM, colorrange = (-0.5, 6.5))
+    meshlines!(ax, A.h, A.Z, maps.levels; every = 1000, cols = 10^6)
+    k = findall(instr .& (abs.(S.E .- maps.x[A.i]) .< 10))
+    scatter!(ax, S.N[k], S.z[k], markersize = msize.(S.mag[k]) .* 0.8, color = (:black, 0.55), strokecolor = :white, strokewidth = 0.2)
+    kr = findall(abs.(RL.E .- maps.x[A.i]) .< 10)
+    scatter!(ax, RL.N[kr], RL.z[kr], markersize = 3, color = ifelse.(RL.sequence[kr] .== "Anzère", "#2a78d6", "#c0504d"))
+    ylims!(ax, -22, 4.5); xlims!(ax, R.N...)
+    els, labs = surflegend(maps.levels)
+    Legend(g3[1, 2], [[PolyElement(color = PHCOLS[k]) for k in 2:4]; els[1:end]], [PHNAMES[2:4]; labs[1:end]], framevisible = false, labelsize = 11)
+    # magnitude through time
+    g4 = fig[3, 1:2] = GridLayout()
+    ax = Axis(g4[1, 1], xlabel = "year", ylabel = "magnitude", title = "Magnitudes through time: ECOS historical events (Mw) and the instrumental catalogue (mostly ML)", titlesize = 12)
+    t = yr.(S.time)
+    scatter!(ax, t[.!hist .& (S.time .< "1975")], S.mag[.!hist .& (S.time .< "1975")], color = (:red, 0.35), markersize = 4)
+    scatter!(ax, t[hist], S.mag[hist], marker = :star5, color = (:red, 0.7), markersize = 10)
+    scatter!(ax, t[S.time .>= "1975"], S.mag[S.time .>= "1975"], color = (:black, 0.25), markersize = 2)
+    xlims!(ax, 1500, 2027)
+    rowsize!(fig.layout, 1, Relative(0.47)); rowsize!(fig.layout, 3, Relative(0.17))
+    Label(fig[0, 1:2], "Seismicity of the region: $(length(S.E)) earthquakes in the SED catalogue (since $(S.time[argmin(S.time)][1:4])), $(count(>=(4), S.mag)) of M ≥ 4; " *
+                       "largest $(S.time[argmax(S.mag)][1:4]) $(S.name[argmax(S.mag)]) Mw $(maximum(S.mag))", fontsize = 14)
+    savefig("seismicity", fig)
 end
 
 # ------------------------------------------------------------------------------------------------ Morcles

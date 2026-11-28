@@ -111,7 +111,8 @@ end
     valais_curvilinear_maps(r = valais_region(); dx = 0.25, dz = (0.025, 0.1, 0.5, 0.5, 1.0), fine_depth = 1.0,
                             fine_min = 0.25, depths = (fine_depth,), interfaces = (:base_cs, :conrad, :moho),
                             columns = :uniform, dx_data = dx, spacing = :uniform, min_thickness = 0.001,
-                            interface_above = false, heights = true, morcles = true) -> NamedTuple
+                            interface_above = false, heights = true, morcles = true, glaciers = false,
+                            lakes = false) -> NamedTuple
 
 The 3D model on a curvilinear mesh, as maps: the column axes `x`, `y` (LV95, km), the heights `z` of the mesh (an array
 `(nx, ny, nz)`, see [`curvilinear_levels`](@ref)), the layer `interfaces` ([`model_interfaces`](@ref)), the meshed
@@ -124,6 +125,8 @@ layer (`fine_depth` km), 100 m down to the base of the consolidated sediments, 5
   curvilinear solver needs; the rasters are read at `dx_data` and interpolated bilinearly onto the columns.
 - `interface_above = true`: a node exactly on the base of the consolidated sediments, the Conrad or the Moho takes the
   material above it (SeismicWavePC's convention for the interfaces of a curvilinear mesh); by default the one below.
+- `glaciers`, `lakes`: ice and lake water between the topography and the solid surface, as in
+  [`valais_model_maps`](@ref). The top level stays the topography, so they lie inside the near-surface layer.
 - `heights = false`: `z` is `nothing` (for meshes too large for one process): [`valais_model_block`](@ref) and
   [`curvilinear_heights`](@ref) make the heights of the columns they need.
 
@@ -133,20 +136,23 @@ nodes: the top level is the topography.
 function valais_curvilinear_maps(r::ValaisRegion = valais_region(); dx = 0.25, dz = (0.025, 0.1, 0.5, 0.5, 1.0),
                                  fine_depth = 1.0, fine_min = 0.25, depths = (fine_depth,), interfaces = (:base_cs, :conrad, :moho),
                                  columns = :uniform, dx_data = dx, spacing = :uniform, min_thickness = 0.001,
-                                 interface_above = false, heights = true, morcles = true)
+                                 interface_above = false, heights = true, morcles = true, glaciers = false, lakes = false)
     columns in (:uniform, :sbp) || throw(ArgumentError("columns = :uniform or :sbp"))
     if columns === :uniform
         x, y, topo = fetch_topography(r; dx = dx)
         _, _, _, tmud = fetch_swissbedrock(r; dx = dx)
+        B = ice_water_thickness(r, topo; dx, glaciers, lakes)
     else
         xr, yr, tr = fetch_topography(r; dx = dx_data)
         _, _, _, qr = fetch_swissbedrock(r; dx = dx_data)
+        Br = ice_water_thickness(r, tr; dx = dx_data, glaciers, lakes)
         x = sbp_nodes(r.E[1], r.E[2], round(Int, (r.E[2] - r.E[1]) / dx) + 1)
         y = sbp_nodes(r.N[1], r.N[2], round(Int, (r.N[2] - r.N[1]) / dx) + 1)
         topo = _bilinear_raster(xr, yr, replace(tr, NaN => 0.0), x, y)
         tmud = _bilinear_raster(xr, yr, qr, x, y)
+        B = map(a -> _bilinear_raster(xr, yr, a, x, y), Br)
     end
-    I = model_interfaces(x, y, topo, tmud)
+    I = model_interfaces(x, y, topo, tmud; B...)
     S = meshing_surfaces(I, r.z[1]; fine_depth, fine_min, depths, interfaces)
     nz = layer_cells(S, dz; spacing)
     L = heights ? curvilinear_levels(x, y, S; nz, spacing, min_thickness) : nothing
@@ -170,7 +176,8 @@ end
 """
     build_valais_curvilinear_model(r = valais_region(); dx = 0.25, dz = (0.025, 0.1, 0.5, 0.5, 1.0), fine_depth = 1.0,
                                    spacing = :uniform, min_thickness = 0.001, velocities = DEFAULT_VELOCITIES,
-                                   morcles = true, temperature = true, outdir = datadir("output"), write = true)
+                                   morcles = true, temperature = true, glaciers = false, lakes = false,
+                                   outdir = datadir("output"), write = true)
         -> (; model, surfaces, maps)
 
 The Valais model of [`build_valais_model`](@ref) on the curvilinear mesh of [`valais_curvilinear_maps`](@ref): `model` is
@@ -182,8 +189,8 @@ with the height of each meshed surface. With `write`, both are written to ParaVi
 function build_valais_curvilinear_model(r::ValaisRegion = valais_region(); dx = 0.25, dz = (0.025, 0.1, 0.5, 0.5, 1.0),
                                         fine_depth = 1.0, fine_min = 0.25, spacing = :uniform, min_thickness = 0.001,
                                         velocities = DEFAULT_VELOCITIES, morcles = true, temperature = true,
-                                        outdir = datadir("output"), write = true)
-    maps = valais_curvilinear_maps(r; dx, dz, fine_depth, fine_min, spacing, min_thickness, morcles)
+                                        glaciers = false, lakes = false, outdir = datadir("output"), write = true)
+    maps = valais_curvilinear_maps(r; dx, dz, fine_depth, fine_min, spacing, min_thickness, morcles, glaciers, lakes)
     fields = valais_model_block(maps; velocities, temperature)
     X, Y, _ = xyz_grid(maps.x, maps.y, 1:size(maps.z, 3))
     model = CartData(X, Y, maps.z, fields)
@@ -202,7 +209,8 @@ end
 
 """
     curvilinear_density_model(r = valais_region(); pad = 20.0, dx = 1.0, sub = 4, nsub_z = 4,
-                              dz = (0.25, 0.5, 2.0, 2.5, 5.0), fine_depth = 1.0, fine_min = 0.25, min_thickness = 0.001)
+                              dz = (0.25, 0.5, 2.0, 2.5, 5.0), fine_depth = 1.0, fine_min = 0.25, min_thickness = 0.001,
+                              glaciers = false, lakes = false)
         -> (; x, y, z, rho, levels, nz, topo, maps)
 
 Density [kg/m³] of the model at the nodes of a coarse curvilinear mesh for gravity: columns every `dx` km over the region
@@ -210,10 +218,12 @@ Density [kg/m³] of the model at the nodes of a coarse curvilinear mesh for grav
 The density of a node is the mean over its dual cell: `sub × sub` columns of the model at `dx / sub` and `nsub_z` depths
 in each, at the depths below the topography of the dual cell (so that every sample is below the surface of its own
 column). In the padding, the model has no Quaternary deposits (no swissBEDROCK); topography, 3D-ALPS and Moho are used
-as in the region. `maps` holds the interfaces at `dx / sub` over the padded region.
+as in the region. `maps` holds the interfaces at `dx / sub` over the padded region. `glaciers`, `lakes`: ice and lake water
+over the whole padded region (see [`ice_water_thickness`](@ref)).
 """
 function curvilinear_density_model(r::ValaisRegion = valais_region(); pad = 20.0, dx = 1.0, sub = 4, nsub_z = 4,
-                                   dz = (0.25, 0.5, 2.0, 2.5, 5.0), fine_depth = 1.0, fine_min = 0.25, min_thickness = 0.001)
+                                   dz = (0.25, 0.5, 2.0, 2.5, 5.0), fine_depth = 1.0, fine_min = 0.25, min_thickness = 0.001,
+                                   glaciers = false, lakes = false)
     P = ValaisRegion((r.E[1] - pad, r.E[2] + pad), (r.N[1] - pad, r.N[2] + pad), r.z)
     dxf = dx / sub
     xf, yf, topof = fetch_topography(P; dx = dxf)
@@ -223,7 +233,7 @@ function curvilinear_density_model(r::ValaisRegion = valais_region(); pad = 20.0
     tmud = zeros(length(xf), length(yf))
     oi, oj = round(Int, (xr[1] - xf[1]) / dxf), round(Int, (yr[1] - yf[1]) / dxf)
     tmud[oi .+ eachindex(xr), oj .+ eachindex(yr)] .= replace(tr, NaN => 0.0)
-    If = model_interfaces(xf, yf, topof, tmud)
+    If = model_interfaces(xf, yf, topof, tmud; ice_water_thickness(P, topof; dx = dxf, glaciers, lakes)...)
     maps = (; x = xf, y = yf, z = nothing, interfaces = If, morcles = read_morcles())
     # coarse columns: block means of the fine surfaces
     nx, ny = length(xf) ÷ sub, length(yf) ÷ sub
