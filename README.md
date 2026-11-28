@@ -1,8 +1,9 @@
 # GeoValaisWallis3D.jl
 
-3D geological / seismic velocity model of the Valais/Wallis region (Swiss Alps), from the
-topographic surface down to below the Moho, built with
-[GeophysicalModelGenerator.jl](https://github.com/JuliaGeodynamics/GeophysicalModelGenerator.jl).
+3D geological and geophysical model of the Valais/Wallis region (Switzerland).
+The geomodel is constructed from the topographic surface down to below the Moho, built with
+[GeophysicalModelGenerator.jl](https://github.com/JuliaGeodynamics/GeophysicalModelGenerator.jl), which allows to bring together data coming from different sources.
+In addition, it also handles different 3D mesh gemoetries (rectilinear and curvilinear), which can then be employed for subsequent computations.  
 
 ## Data sources
 
@@ -20,13 +21,13 @@ topographic surface down to below the Moho, built with
 | Lakes | swissBATHY3D: lake-floor elevation (Lac Léman, Lake Thun in the region) | swisstopo, [data.geo.admin.ch](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swissbathy3d), OGD |
 | Seismic subsoil classes | SIA 261 classes A–F, national map incl. the Valais 1:25 000 maps of the Rhône valley (CREALP for the canton, [vs.ch](https://www.vs.ch/web/sdm/cartes-de-sol-de-fondation)); spectral microzonation perimeters | BAFU, `ch.bafu.gefahren-baugrundklassen` (release 4 Mar 2026), `ch.bafu.gefahren-spektral`, OGD |
 
-The swisstopo **swissAlps3D (SA3D)** model is not yet publicly downloadable (2026); it can be added
+The swisstopo **swissAlps3D (SA3D)** model is not yet publicly downloadable (2026); it can be added 
 when released. Data are downloaded on first use to `data/raw/` (or `$GEOVALAIS_DATADIR/raw` if set, e.g. on a cluster scratch file system; first run ≈ 5 GB transferred,
-mostly swissBEDROCK tiles; the cache is small); outputs go to `data/output/`. Both are git-ignored.
+mostly swissBEDROCK tiles; the cache is small); outputs go to `data/output/`. Both are git-ignored, no data files are stored in the GeoValaisWallis3D.jl repository.
 
 ## Repository layout
 
-The model is built on two grids. Each grid has its own folder under `figures/`, with its README, figure script and
+The model is built on two grids (curvilinear and rectilinear). Each grid has its own folder under `figures/`, with its README, figure script and
 images:
 
 ```
