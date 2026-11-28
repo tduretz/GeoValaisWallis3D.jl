@@ -14,6 +14,7 @@ Data sources
 - Gravity: swisstopo Gravimetric Atlas 1:100 000 (Bouguer anomalies), Gravimetric Map 1:500 000,
   National Gravity Network LSN2004 (absolute gravity)
 - Seismic subsoil classes (SIA 261): BAFU national map, including the Valais 1:25 000 maps (CREALP)
+- Seismicity: SED earthquake catalogue (FDSN; ECOS historical events); focal mechanisms of Truttmann et al. (2023)
 
 The model is built in Swiss LV95 coordinates (EPSG:2056), expressed in km, on a rectilinear grid
 (`build_valais_model`) or on a curvilinear mesh of GeophysicalModelGenerator whose levels follow the topography,
@@ -34,6 +35,8 @@ using LinearMaps: LinearMap
 export ValaisRegion, valais_region, datadir
 export lv95_to_lonlat, lonlat_to_lv95
 export fetch_topography, fetch_swissbedrock
+export fetch_seismicity, fetch_focal_mechanisms, read_focal_mechanisms, read_relocations_truttmann2023, download_truttmann2023
+export fault_vectors, pt_axes, beachball
 export download_glacier_beds, fetch_glacier_bed, fetch_lake_bathymetry, ice_water_thickness
 export download_tectonic_map, tectonic_map_on_grid, TectonicMap
 export download_moho_spada, read_moho_spada, interpolate_scattered
@@ -73,5 +76,6 @@ include("model.jl")
 include("gravity.jl")
 include("subsoil.jl")
 include("curvilinear.jl")
+include("seismicity.jl")
 
 end # module GeoValaisWallis3D

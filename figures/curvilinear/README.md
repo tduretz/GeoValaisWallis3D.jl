@@ -65,7 +65,7 @@ mesh.
 
 ```bash
 GVW_BACKEND=metal julia --project=figures -t auto figures/curvilinear/make_figures.jl          # all
-julia --project=figures -t auto figures/curvilinear/make_figures.jl mesh layers sections        # some of: overview mesh layers sections subsoil gravity density glaciers morcles showcase
+julia --project=figures -t auto figures/curvilinear/make_figures.jl mesh layers sections        # some of: overview mesh layers sections subsoil gravity density glaciers seismicity morcles showcase
 ```
 
 `overview` and `showcase` render their 3D panels with GLMakie, which needs a display. `gravity` and `density` call GMG
@@ -140,6 +140,13 @@ the mesh stays the topography, so both lie in the 25 m layer.
   them off.
 
 ![Glaciers and lakes](glaciers.jpg)
+
+**Seismicity.** The SED catalogue (since 1975 by depth; historical events of Mw ≥ 4.5 as stars), the St-Léonard and
+Anzère sequences north of Sion with the relocations and focal mechanisms of Truttmann et al. (2023), and the hypocentres
+within 10 km of section A–A' on the model. Of the hypocentres since 1975, 64 % lie in the upper crust and 36 % in the
+consolidated sediments; the bands at fixed depths (e.g. 1, 2, 10 km) are events whose depth the SED could not resolve.
+
+![Seismicity](seismicity.jpg)
 
 **Morcles.** A W–E section of the Morcles model, sampled on a 2D curvilinear mesh: GMG `curvilinear_grid` with a single
 `y`, 50 m columns and 25 m levels from the topography. Compared with the 50 m voxels, the mesh follows the relief

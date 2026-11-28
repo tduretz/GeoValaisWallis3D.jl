@@ -18,6 +18,8 @@ In addition, it also handles different 3D mesh gemoetries (rectilinear and curvi
 | Local 3D geology | Nappe de Morcles (18 formations, 50 m voxels) | Thornton et al. (2018), [doi:10.6084/m9.figshare.c.4130759](https://doi.org/10.6084/m9.figshare.c.4130759), CC0 |
 | Gravity | Gravimetric Atlas of Switzerland 1:100 000 (points, complete Bouguer anomaly, 2670 kg/m³); Gravimetric Map 1:500 000 (Bouguer contours); National Gravity Network LSN2004 (absolute *g*) | swisstopo, map.geo.admin.ch layers `ch.swisstopo.geologie-gravimetrischer_atlas.messpunkte`, `ch.swisstopo.geologie-geodaesie-bouguer_anomalien`, `ch.swisstopo.landesschwerenetz`, OGD |
 | Glaciers | Swiss Glacier Thickness – Release 2020: glacier bed elevation of the Swiss Glacier Inventory glaciers (10 m) | Grab et al. (2021), ETH Zurich, [doi:10.3929/ethz-b-000434697](https://doi.org/10.3929/ethz-b-000434697), CC BY 4.0 |
+| Seismicity | SED earthquake catalogue: instrumental since 1975 and historical events (ECOS-09), FDSN event service `eida.ethz.ch` | Swiss Seismological Service (SED), ETH Zurich |
+| Focal mechanisms | St-Léonard and Anzère sequences: 28 first-motion focal mechanisms, 734 double-difference relocations | Truttmann et al. (2023), [doi:10.5281/zenodo.7855039](https://doi.org/10.5281/zenodo.7855039), CC BY 4.0 |
 | Lakes | swissBATHY3D: lake-floor elevation (Lac Léman, Lake Thun in the region) | swisstopo, [data.geo.admin.ch](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swissbathy3d), OGD |
 | Seismic subsoil classes | SIA 261 classes A–F, national map incl. the Valais 1:25 000 maps of the Rhône valley (CREALP for the canton, [vs.ch](https://www.vs.ch/web/sdm/cartes-de-sol-de-fondation)); spectral microzonation perimeters | BAFU, `ch.bafu.gefahren-baugrundklassen` (release 4 Mar 2026), `ch.bafu.gefahren-spektral`, OGD |
 
@@ -219,6 +221,25 @@ GeophysicalModelGenerator ≥ 0.10.1 provides the adjoint of its gravity code (`
 ValaisRawilWaves (`scripts/07_density_inversion.jl`) applies this to the wave-propagation model and the
 atlas points.
 
+## Seismicity
+
+```julia
+S = fetch_seismicity()             # SED catalogue in the region: time, E, N, z = -depth, depth, mag, magtype, name, type
+F = fetch_focal_mechanisms()       # nodal planes, P and T axes, style (SS, NF, TF, ...): Truttmann et al. (2023)
+pt_axes(53, 77, 159)               # P and T axes of a double couple; beachball(strike, dip, rake) for plotting
+```
+
+- **Catalogue:** 16 529 earthquakes in the region since 1524, 60 of M ≥ 4. The largest is the 1855 Stalden–Visp
+  earthquake (Mw 6.2), followed by Aigle 1584 (Mw 5.9), Sierre 1946 (Mw 5.8, the 25 January 1946 Valais earthquake) and Ardon 1524 (Mw 5.8). Since 1975, 95 % of
+  the hypocentres are shallower than 9 km (median 4 km). `eventtype = nothing` keeps quarry blasts, explosions,
+  landslides and ice quakes.
+- **Focal mechanisms:** the SED's event service does not deliver focal mechanisms, and its compilation is not openly
+  available as a file. `fetch_focal_mechanisms` reads the published data of Truttmann et al. (2023).
+  `read_focal_mechanisms(files...)` reads any file in the same SED format, e.g. a larger SED compilation.
+- **In the model:** of the hypocentres since 1975 in the region, 64 % lie in the upper crust and 36 % in the consolidated
+  sediments of the curvilinear model (SED depths, z = −depth). The figure is in
+  [figures/curvilinear/README.md](figures/curvilinear/README.md).
+
 ## Seismic subsoil classes
 
 ```bash
@@ -265,4 +286,8 @@ GVW_ONLINE_TESTS=true julia --project=. -e 'using Pkg; Pkg.test()'   # with down
   distribution of all Swiss glaciers based on extended ground-penetrating radar data and glaciological modeling.
   *J. Glaciol.* 67(266), 1074–1092, doi:10.1017/jog.2021.55. Data: Swiss Glacier Thickness – Release 2020,
   doi:10.3929/ethz-b-000434697.
+- Truttmann, S., Diehl, T., Herwegh, M. (2023). Hypocenter-based 3D imaging of active faults: method and applications
+  in the southwestern Swiss Alps. *J. Geophys. Res. Solid Earth* 128, e2023JB026352, doi:10.1029/2023JB026352.
+  Data: doi:10.5281/zenodo.7855039.
+- Fäh, D., et al. (2011). ECOS-09 Earthquake Catalogue of Switzerland, Release 2011. Swiss Seismological Service, ETH Zurich.
 - swisstopo: swissALTIRegio; swissBEDROCK; swissBATHY3D; Tectonic Map of Switzerland 1:500 000.

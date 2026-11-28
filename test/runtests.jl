@@ -171,6 +171,37 @@ using Test, Statistics
         @test P(3, 2.1)[1] == PHASES.air
     end
 
+    @testset "seismicity and focal mechanisms" begin
+        # SED FDSN text: type and magnitude filters, region in LV95
+        txt = ["#EventID|Time|Latitude|Longitude|Depth/km|Author|Catalog|Contributor|ContributorID|MagType|Magnitude|MagAuthor|EventLocationName|EventType",
+               "a|2020-02-25T14:39:03|46.30722|7.36685|3.26|x||SED|a|MLh|0.91|x|Sion VS|earthquake",
+               "b|2020-02-26T16:58:38|46.20048|6.99814|-0.39|x||SED|b|MLh|1.02|x|Monthey VS|quarry blast",
+               "c|1946-01-25T17:32:00|46.35|7.4||x||SED|c|Mw|5.8|x|Sierre|earthquake",
+               "d|2020-01-01T00:00:00|47.5|8.5|5.0|x||SED|d|MLh|2.0|x|Zurich|earthquake"]
+        S = GeoValaisWallis3D._parse_sed_text(txt, valais_region(), 0)
+        @test S.id == ["a", "c"] && S.z[1] ≈ -3.26 && isnan(S.z[2]) && S.mag[2] == 5.8 && S.name[1] == "Sion VS"
+        @test all(isapprox.(lv95_to_lonlat(S.E[1], S.N[1]), (7.36685, 46.30722); atol = 1e-6))
+        @test length(GeoValaisWallis3D._parse_sed_text(txt, valais_region(), 0; eventtype = nothing).id) == 3
+        @test GeoValaisWallis3D._parse_sed_text(txt, valais_region(), 0; minmagnitude = 2).id == ["c"]
+        # focal mechanisms in the SED format (Truttmann et al. 2023, Anzère, 5 Nov 2019 00:54)
+        f = tempname()
+        write(f, "Yr;Mo;Dy;Hr:Mi;Lat;Lon;Z;Mag;A;Strike1;Dip1;Rake1;Strike2;Dip2;Rake2;Pazim;Pdip;Tazim;Tdip;Q;Type;Loc;Lit;;;\n" *
+                 "2019;11;5;00:54;46.318;7.366;5;3.3;1;53;77;159;148;70;14;102;5;10;24;1;SS;ANZ;Anzere;[X];;;\n")
+        F = read_focal_mechanisms(f)
+        @test F.time == ["2019-11-05T00:54"] && F.z == [-5.0] && F.style == ["SS"] && F.locality == ["Anzere"] && F.reference == ["[X]"]
+        # P and T axes from either nodal plane, as in the file (to 1°)
+        for (s, d, r) in ((53, 77, 159), (148, 70, 14))
+            p, t = pt_axes(s, d, r)
+            @test abs(p[1] - 102) <= 1.5 && abs(p[2] - 5) <= 1.5 && abs(t[1] - 10) <= 1.5 && abs(t[2] - 24) <= 1.5
+        end
+        # beachball: vertical left-lateral fault striking north, compression in the NE and SW quadrants (T axis NE)
+        x, y, pol = beachball(0, 90, 0; n = 41)
+        at(e, nn) = pol[argmin(abs.(x .- e)), argmin(abs.(y .- nn))]
+        @test at(0.5, 0.5) == 1 && at(-0.5, -0.5) == 1 && at(0.5, -0.5) == 0 && at(-0.5, 0.5) == 0 && isnan(pol[1, 1])
+        # a normal fault: dilatation at the centre (vertical P axis)
+        @test beachball(0, 45, -90; n = 41)[3][21, 21] == 0
+    end
+
     @testset "thin deposits" begin
         z = [0.0, 0.025, 0.05, 0.075, 0.125, 0.175]          # 25 m cells, then 50 m
         h = GeoValaisWallis3D.top_cell_height
