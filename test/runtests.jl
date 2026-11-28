@@ -137,6 +137,40 @@ using Test, Statistics
         end
     end
 
+    @testset "glaciers and lakes" begin
+        # cover of a raster on a coarser grid: mean over the covered pixels and covered fraction
+        f = tempname() * ".tif"
+        GeoValaisWallis3D.AG.create(f; driver = GeoValaisWallis3D.AG.getdriver("GTiff"), width = 10, height = 5,
+                                    nbands = 1, dtype = Float32) do ds
+            GeoValaisWallis3D.AG.setgeotransform!(ds, [2_600_000.0, 10.0, 0.0, 1_200_050.0, 0.0, -10.0])
+            b = GeoValaisWallis3D.AG.getband(ds, 1)
+            GeoValaisWallis3D.AG.setnodatavalue!(b, -9999.0)
+            # cell 1 (5 × 5 pixels): 20 pixels at 1000 m, 5 without data; cell 2: 4 pixels at 2000 m
+            A = fill(-9999f0, 10, 5); A[1:5, 2:5] .= 1000f0; A[6:7, 1:2] .= 2000f0
+            GeoValaisWallis3D.AG.write!(b, A)
+        end
+        x, y, m, c = GeoValaisWallis3D._cover_grid(ValaisRegion(E = (2600.0, 2600.15), N = (1200.0, 1200.05), z = (-1.0, 1.0)), 0.05, [f])
+        @test x ≈ [2600.025, 2600.075, 2600.125] && y ≈ [1200.025]
+        @test m[1] ≈ 1.0 && c[1] ≈ 20 / 25 && m[2] ≈ 2.0 && c[2] ≈ 4 / 25
+        @test isnan(m[3]) && c[3] == 0
+
+        # interfaces and material: ice and water between the topography and the solid surface
+        xx = [0.5, 1.5, 2.5]; yy = [0.5]; topo = fill(2.0, 3, 1)
+        ice = reshape([0.3, 0.0, 0.0], 3, 1); water = reshape([0.0, 0.2, 0.0], 3, 1); tmud = fill(0.1, 3, 1)
+        I0 = model_interfaces(xx, yy, topo, tmud)
+        I = model_interfaces(xx, yy, topo, tmud; ice, water)
+        @test I.solid ≈ topo .- ice .- water && I.bed ≈ I.solid .- 0.1 && I.bed[3] == I0.bed[3]
+        @test I0.solid == I0.topo && all(iszero, I0.ice)
+        maps = (; x = xx, y = yy, z = nothing, interfaces = I, morcles = nothing)
+        P(i, z) = GeoValaisWallis3D._model_point(maps, i, 1, z)
+        @test P(1, 1.9)[1] == PHASES.ice && P(1, 1.9)[3] ≈ 1.9 && P(1, 1.9)[4] == 917
+        @test P(2, 1.9)[1] == PHASES.water && P(2, 1.9)[3] == 0 && P(2, 1.9)[4] == 1000
+        @test P(1, 1.65)[1] == PHASES.quaternary && P(2, 1.75)[1] == PHASES.quaternary
+        # the Quaternary below the ice has the velocity at its depth below the glacier bed, as at the surface elsewhere
+        @test P(1, 1.65)[2:3] == P(3, 1.95)[2:3]
+        @test P(3, 2.1)[1] == PHASES.air
+    end
+
     @testset "thin deposits" begin
         z = [0.0, 0.025, 0.05, 0.075, 0.125, 0.175]          # 25 m cells, then 50 m
         h = GeoValaisWallis3D.top_cell_height

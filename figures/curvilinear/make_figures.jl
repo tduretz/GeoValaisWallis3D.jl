@@ -1,7 +1,7 @@
 # Figures of the model on the curvilinear mesh of GeophysicalModelGenerator (curvilinear_grid): the grid levels follow the
 # topography, the base of the consolidated sediments, the Conrad and the European Moho.
 #     julia --project=figures -t auto figures/curvilinear/make_figures.jl [figure ...]
-# Figures: overview mesh layers sections subsoil gravity density morcles showcase (default: all).
+# Figures: overview mesh layers sections subsoil gravity density glaciers morcles showcase (default: all).
 # Output: figures/curvilinear/*.jpg (needs ImageMagick). overview and showcase render their 3D panels with GLMakie (needs a
 # display). gravity and density use GMG voxel_grav on curvilinear grids; GVW_BACKEND=metal runs them on the Apple GPU
 # (Float32), otherwise on the CPU (Float64, slow). Their results are cached in data/output/curvilinear_*.jls (delete to rerun).
@@ -10,7 +10,7 @@ using GeoValaisWallis3D, CairoMakie, Statistics, Serialization
 
 const FIGDIR = @__DIR__
 mkpath(FIGDIR)
-const ALL = ["overview", "mesh", "layers", "sections", "subsoil", "gravity", "density", "morcles", "showcase"]
+const ALL = ["overview", "mesh", "layers", "sections", "subsoil", "gravity", "density", "glaciers", "morcles", "showcase"]
 const WHICH = isempty(ARGS) ? ALL : ARGS
 const R = valais_region()
 CairoMakie.activate!(type = "png", px_per_unit = 1.25)
@@ -476,6 +476,103 @@ if "density" in WHICH
     Label(fig[0, 1], "Density inversion of the Bouguer anomaly on a curvilinear mesh (GMG voxel_grav + voxel_grav_adjoint, LSQR): $(length(E)) atlas points, " *
                      "$(length(z)) unknowns ($(join(size(z), " × ")), no air nodes), $(DRES.iterations) iterations", fontsize = 14)
     savefig("density", fig)
+end
+
+# ------------------------------------------------------------------------------------------- glaciers and lakes
+# ice (Swiss Glacier Thickness R2020) and lake water (swissBATHY3D) between the topography and the solid surface: maps, their
+# gravity effect at the atlas points (GMG voxel_grav, curvilinear density meshes with and without them), sections
+if "glaciers" in WHICH
+    PH9 = [PHCOLS; "#bfe3f2"; "#2f6db5"]; PH9CM = cgrad(PH9, 9, categorical = true)
+    PH9N = [PHNAMES; "glacier ice"; "lake water"]
+    cache = datadir("output", "curvilinear_glaciers_gravity.jls")
+    GR = if isfile(cache)
+        deserialize(cache)
+    else
+        backend, ft = backend_ft()
+        at = fetch_gravity_atlas(R; margin = 20.0)
+        function gravity_of(; kw...)
+            d = curvilinear_density_model(R; pad = 20.0, dx = 1.0, kw...)
+            sel = (d.x[1] + 2 .<= at.E .<= d.x[end] - 2) .& (d.y[1] + 2 .<= at.N .<= d.y[end] - 2) .& .!isnan.(at.bouguer)
+            X, Y, _ = xyz_grid(d.x, d.y, 1:size(d.z, 3))
+            St = CartData(reshape(at.E[sel], :, 1, 1), reshape(at.N[sel], :, 1, 1), reshape(at.h[sel], :, 1, 1), (h = reshape(at.h[sel], :, 1, 1),))
+            # densities relative to 2670 kg/m³: both meshes have the same outer shape, so the reference cancels in the difference
+            g = vec(voxel_grav(CartData(X, Y, d.z, (rho = d.rho,)), d.rho .- 2670.0; stations = St, refMod = zeros(size(d.z, 3)),
+                               rhoTol = 0, backend, float_type = ft)[1])
+            (; g, sel)
+        end
+        t0 = time()
+        g0 = gravity_of(); g1 = gravity_of(glaciers = true, lakes = true)
+        @info "gravity of the ice and water in $(round(time() - t0, digits = 1)) s"
+        r = (; E = at.E[g0.sel], N = at.N[g0.sel], dg = g1.g .- g0.g)
+        serialize(cache, r); r
+    end
+    # maps at 100 m
+    xm, ym, tm = fetch_topography(R; dx = 0.1)
+    BW = ice_water_thickness(R, tm; dx = 0.1)
+    MG = valais_curvilinear_maps(R; dx = 0.25, glaciers = true, lakes = true)
+    I = MG.interfaces
+    ki = argmax(I.ice); kl = argmax(I.water)
+    vol(a, dx) = sum(a) * dx^2
+    fig = Figure(size = (1500, 1250))
+    g1 = fig[1, 1] = GridLayout()
+    ax = mapaxis(g1[1, 1]; title = "Ice thickness (Grab et al. 2021) and lake depth (swissBATHY3D) at 100 m")
+    shade!(ax, xm, ym, tm)
+    hi = heatmap!(ax, xm, ym, nanmask(1e3 .* BW.ice, BW.ice .<= 0.002), colormap = Reverse(:devon), colorrange = (0, 600), nan_color = :transparent)
+    hw = heatmap!(ax, xm, ym, nanmask(1e3 .* BW.water, BW.water .<= 0.002), colormap = Reverse(:deep), colorrange = (0, 300), nan_color = :transparent)
+    for (k, n) in ((ki, "A"), (kl, "B"))
+        e = MG.x[Tuple(k)[1]]
+        lines!(ax, [e, e], collect(R.N), color = :black, linewidth = 1.2, linestyle = :dash)
+        text!(ax, e, R.N[2], text = "$(n)–$(n)'", align = (:center, :bottom), offset = (0, 2), fontsize = 13)
+    end
+    places!(ax); limits_region!(ax)
+    Colorbar(g1[1, 2], hi, label = "ice thickness (m)", height = Relative(0.7))
+    Colorbar(g1[1, 3], hw, label = "water depth (m)", height = Relative(0.7))
+    # gravity effect, and what it does to the residual of the starting model of the density inversion
+    g2 = fig[1, 2] = GridLayout()
+    inner = (R.E[1] .<= GR.E .<= R.E[2]) .& (R.N[1] .<= GR.N .<= R.N[2])
+    ax = mapaxis(g2[1, 1]; title = "Gravity effect of ice and water at the atlas points (ρ 917 and 1000 instead of 2670 / 2000 kg/m³)")
+    shade!(ax, xm, ym, tm)
+    contour!(ax, xm, ym, BW.ice, levels = [0.002], color = (:black, 0.5), linewidth = 0.5)
+    sc = scatter!(ax, GR.E, GR.N, color = GR.dg, colormap = Reverse(:RdBu), colorrange = (-8, 8), markersize = 5,
+                  strokecolor = (:black, 0.3), strokewidth = 0.2)
+    limits_region!(ax)
+    Colorbar(g2[1, 2], sc, label = "Δg (mGal)", height = Relative(0.7))
+    note = "in the region: Δg from $(round(minimum(GR.dg[inner]), digits = 1)) to $(round(maximum(GR.dg[inner]), digits = 1)) mGal"
+    dcache = datadir("output", "curvilinear_density_inversion.jls")
+    if isfile(dcache)
+        D = deserialize(dcache)
+        if D.E == GR.E && D.N == GR.N
+            rms(a) = sqrt(mean(abs2, a))
+            r0 = D.dobs .- D.dg0 .- D.offset; r0 .-= mean(r0[inner])
+            r1 = r0 .- GR.dg; r1 .-= mean(r1[inner])
+            s = inner .& (GR.dg .< -1)
+            note *= "\nresidual (observed − model) of the starting model of the density inversion: rms $(round(rms(r0[inner]), digits = 1)) → " *
+                    "$(round(rms(r1[inner]), digits = 1)) mGal with ice and water.\nAt the $(count(s)) stations with Δg < −1 mGal (mean $(round(mean(GR.dg[s]), digits = 1)) mGal) " *
+                    "the residual is already $(round(mean(r0[s]), digits = 1)) mGal (elsewhere $(round(mean(r0[inner .& .!s]), digits = 1))):\n" *
+                    "the model is lighter than observed there, and adding the ice makes it worse. The atlas reduction may already treat\n" *
+                    "glaciers and lakes, or the crystalline massifs under them are denser than in 3D-ALPS; the gravity figures keep them off."
+        end
+    end
+    Label(g2[2, 1:2], note, fontsize = 12, halign = :left, tellwidth = false)
+    # sections through the thickest ice and the deepest lake: every level and column of the 250 m curvilinear mesh
+    for (c, k, n, nl, zl, ttl) in ((1, ki, "A", (1135.0, 1162.0), (0.8, 4.3), "glacier ice above the bed (Aletsch, Konkordiaplatz)"),
+                                   (2, kl, "B", (1128.0, 1150.0), (-1.2, 1.0), "Lac Léman: water, Quaternary below the lake floor"))
+        i = Tuple(k)[1]
+        jj = findall(v -> nl[1] <= v <= nl[2], MG.y)
+        F = valais_model_block(MG, i:i, jj)
+        Zs = MG.z[i, jj, :]
+        local ax = Axis(fig[2, c], title = "$(n)–$(n)' (E = $(MG.x[i]) km): $ttl", xlabel = "N (km)", ylabel = "elevation (km)")
+        curvheatmap!(ax, MG.y[jj], Zs, Float64.(sq(F.Phases)), colormap = PH9CM, colorrange = (-0.5, 8.5))
+        meshlines!(ax, MG.y[jj], Zs, MG.levels; every = 1, cols = 1, color = (:black, 0.2), linewidth = 0.3)
+        lines!(ax, MG.y[jj], I.solid[i, jj], color = :black, linewidth = 1.2)
+        xlims!(ax, nl...); ylims!(ax, zl...)
+    end
+    Legend(fig[3, 1:2], [PolyElement(color = PH9[k]) for k in (2, 3, 4, 8, 9)], PH9N[[2, 3, 4, 8, 9]], orientation = :horizontal, framevisible = false)
+    rowsize!(fig.layout, 1, Relative(0.5))
+    Label(fig[0, 1:2], "Glaciers and lakes in the model (glaciers = true, lakes = true): $(round(vol(I.ice, 0.25), digits = 1)) km³ of ice " *
+                       "(up to $(round(Int, 1e3maximum(I.ice))) m) and $(round(vol(I.water, 0.25), digits = 1)) km³ of lake water " *
+                       "(up to $(round(Int, 1e3maximum(I.water))) m) in the region; black line: the solid surface", fontsize = 14)
+    savefig("glaciers", fig)
 end
 
 # ------------------------------------------------------------------------------------------------ Morcles
