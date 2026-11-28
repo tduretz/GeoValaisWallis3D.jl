@@ -16,6 +16,8 @@ topographic surface down to below the Moho, built with
 | Moho | European and Adriatic Moho (5 km grid) | Spada et al. (2013, GJI) |
 | Local 3D geology | Nappe de Morcles (18 formations, 50 m voxels) | Thornton et al. (2018), [doi:10.6084/m9.figshare.c.4130759](https://doi.org/10.6084/m9.figshare.c.4130759), CC0 |
 | Gravity | Gravimetric Atlas of Switzerland 1:100 000 (points, complete Bouguer anomaly, 2670 kg/m³); Gravimetric Map 1:500 000 (Bouguer contours); National Gravity Network LSN2004 (absolute *g*) | swisstopo, map.geo.admin.ch layers `ch.swisstopo.geologie-gravimetrischer_atlas.messpunkte`, `ch.swisstopo.geologie-geodaesie-bouguer_anomalien`, `ch.swisstopo.landesschwerenetz`, OGD |
+| Glaciers | Swiss Glacier Thickness – Release 2020: glacier bed elevation of the Swiss Glacier Inventory glaciers (10 m) | Grab et al. (2021), ETH Zurich, [doi:10.3929/ethz-b-000434697](https://doi.org/10.3929/ethz-b-000434697), CC BY 4.0 |
+| Lakes | swissBATHY3D: lake-floor elevation (Lac Léman, Lake Thun in the region) | swisstopo, [data.geo.admin.ch](https://data.geo.admin.ch/browser/index.html#/collections/ch.swisstopo.swissbathy3d), OGD |
 | Seismic subsoil classes | SIA 261 classes A–F, national map incl. the Valais 1:25 000 maps of the Rhône valley (CREALP for the canton, [vs.ch](https://www.vs.ch/web/sdm/cartes-de-sol-de-fondation)); spectral microzonation perimeters | BAFU, `ch.bafu.gefahren-baugrundklassen` (release 4 Mar 2026), `ch.bafu.gefahren-spektral`, OGD |
 
 The swisstopo **swissAlps3D (SA3D)** model is not yet publicly downloadable (2026); it can be added
@@ -130,8 +132,14 @@ section. Below the bedrock surface they replace the regional geology inside this
   [figures/rectilinear/README.md](figures/rectilinear/README.md) and [figures/curvilinear/README.md](figures/curvilinear/README.md).
 - **Phases** (`PHASES`): `0` air, `1` Quaternary deposits, `2` consolidated sediments
   (Alpine sedimentary nappes), `3` upper crust, `4` lower crust, `5` mantle,
-  `6` Adriatic mantle wedge (Ivrea body).
-  - Quaternary base = topography − swissBEDROCK thickness (0 outside Switzerland).
+  `6` Adriatic mantle wedge (Ivrea body), `7` glacier ice, `8` lake water.
+  - Ice and water (`glaciers = true`, `lakes = true`; off by default): between the topography and the glacier bed
+    (Grab et al. 2021) or the lake floor (swissBATHY3D). The topography is the surface of the ice and the lakes, and
+    swissBEDROCK counts the Quaternary from the glacier bed and the lake floor. Without these options the glaciers are
+    rock, and under the lakes the Quaternary starts at the water surface (the bedrock is too high by the water depth).
+    Ice: Vp 3.8, Vs 1.9 km/s, 917 kg/m³; water: Vp 1.48 km/s, Vs 0, 1000 kg/m³.
+  - Quaternary base = solid surface − swissBEDROCK thickness (0 outside Switzerland); the solid surface is the
+    topography, or the glacier bed / lake floor with `glaciers` / `lakes`.
     With `min_fill = 0.5` (default 0), deposits that fill less than half of the column's top cell are dropped.
   - Base of consolidated sediments = 3D-ALPS top of upper crust (≤ bedrock).
   - Upper/lower crust boundary at the 3D-ALPS fraction of crystalline-crust thickness, scaled to the Spada Moho.
@@ -251,4 +259,9 @@ GVW_ONLINE_TESTS=true julia --project=. -e 'using Pkg; Pkg.test()'   # with down
 - Spooner, C., Scheck-Wenderoth, M., Cacace, M., Anikiev, D. (2020). 3D-ALPS-TR. GFZ Data Services.
 - Thornton, J. M., Mariethoz, G., Brunner, P. (2018). A 3D geological model of a structurally complex Alpine region as a basis for interdisciplinary research. *Sci. Data* 5, 180238.
 - Wagner, M., Kissling, E., Husen, S. (2012). *GJI* 191, 789–802.
-- swisstopo: swissALTIRegio; swissBEDROCK; Tectonic Map of Switzerland 1:500 000.
+- Grab, M., Mattea, E., Bauder, A., Huss, M., Rabenstein, L., Hodel, E., Linsbauer, A., Langhammer, L., Schmid, L.,
+  Church, G., Hellmann, S., Délèze, K., Schaer, P., Lathion, P., Farinotti, D., Maurer, H. (2021). Ice thickness
+  distribution of all Swiss glaciers based on extended ground-penetrating radar data and glaciological modeling.
+  *J. Glaciol.* 67(266), 1074–1092, doi:10.1017/jog.2021.55. Data: Swiss Glacier Thickness – Release 2020,
+  doi:10.3929/ethz-b-000434697.
+- swisstopo: swissALTIRegio; swissBEDROCK; swissBATHY3D; Tectonic Map of Switzerland 1:500 000.

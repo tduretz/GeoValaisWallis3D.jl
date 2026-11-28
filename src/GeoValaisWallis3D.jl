@@ -26,6 +26,7 @@ using Reexport
 import ArchGDAL as AG
 using DelimitedFiles
 using Downloads
+using Serialization: serialize, deserialize
 using LinearAlgebra, Statistics
 using Krylov: lsqr
 using LinearMaps: LinearMap
@@ -33,6 +34,7 @@ using LinearMaps: LinearMap
 export ValaisRegion, valais_region, datadir
 export lv95_to_lonlat, lonlat_to_lv95
 export fetch_topography, fetch_swissbedrock
+export download_glacier_beds, fetch_glacier_bed, fetch_lake_bathymetry, ice_water_thickness
 export download_tectonic_map, tectonic_map_on_grid, TectonicMap
 export download_moho_spada, read_moho_spada, interpolate_scattered
 export download_3dalps, download_3dalps_tr, alps3d_on_grid, temperature_3dalps
@@ -60,6 +62,7 @@ datadir(parts...) = joinpath(get(ENV, "GEOVALAIS_DATADIR", joinpath(dirname(@__D
 include("region.jl")
 include("topography.jl")
 include("bedrock.jl")
+include("glaciers_lakes.jl")
 include("tectonics.jl")
 include("moho.jl")
 include("alps3d.jl")
